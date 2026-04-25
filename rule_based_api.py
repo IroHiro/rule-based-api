@@ -457,7 +457,7 @@ def predict_full():
                 'soil_preparation': soil_preparation,
                 'harvest_advice': harvest_advice,
                 'planting_advice': planting_advice,
-                'typhoon': typhono_info
+                'typhoon': typhoon_info
             }
         }
         
