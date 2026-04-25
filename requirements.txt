@@ -2,5 +2,6 @@ flask==2.3.3
 flask-cors==4.0.0
 requests==2.31.0
 numpy==1.24.3
-python-dotenv==1.0.0
 gunicorn==21.2.0
+setuptools==68.0.0
+wheel==0.41.0
