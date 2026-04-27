@@ -1,4 +1,4 @@
-]"""
+"""
 RULE-BASED FILTER API - CORRECTED VERSION
 Properly calls Suitability API (simple) and Yield API (with sequence data)
 """
