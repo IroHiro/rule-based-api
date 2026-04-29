@@ -47,7 +47,7 @@ CLIMATE_DB = {
 }
 
 # Regional averages (kg/ha)
-REGIONAL_AVG = {'rice': 4500, 'corn': 3800}
+REGIONAL_AVG = {'rice': 4500, 'corn': 3800, 'coconut': 12000}
 
 # Risk levels
 RISK_LEVELS = {
@@ -60,8 +60,9 @@ RISK_LEVELS = {
 
 # Crop parameters
 CROP_PARAMS = {
-    'rice': {'temp_optimal': 28, 'rain_optimal': 1500, 'hum_optimal': 80, 'ph_optimal': 6.2, 'days': 110},
-    'corn': {'temp_optimal': 27, 'rain_optimal': 800, 'hum_optimal': 70, 'ph_optimal': 6.5, 'days': 100}
+    'rice': {'temp_optimal': 28, 'rain_optimal': 1500, 'hum_optimal': 80, 'ph_optimal': 6.2, 'days': 110, 'temp_min': 20, 'temp_max': 35, 'rain_min': 800, 'rain_max': 2500},
+    'corn': {'temp_optimal': 27, 'rain_optimal': 800, 'hum_optimal': 70, 'ph_optimal': 6.5, 'days': 100, 'temp_min': 18, 'temp_max': 32, 'rain_min': 500, 'rain_max': 1800},
+    'coconut': {'temp_optimal': 30, 'rain_optimal': 2000, 'hum_optimal': 80, 'ph_optimal': 5.5, 'days': 365, 'temp_min': 20, 'temp_max': 38, 'rain_min': 1000, 'rain_max': 3000}
 }
 
 
@@ -145,12 +146,28 @@ def calc_climate_match(crop: str, municipality: str, climate_data: Dict) -> floa
         print(f"   [DEBUG] Climate match - temp: {temp}, rainfall: {rainfall}, humidity: {humidity}")
         print(f"   [DEBUG] Optimal - temp: {p['temp_optimal']}, rainfall: {p['rain_optimal']}, humidity: {p['hum_optimal']}")
     
-    temp_score = 100 * np.exp(-((temp - p['temp_optimal'])**2) / 50)
-    rain_score = 100 * np.exp(-((rainfall - p['rain_optimal'])**2) / 180000)
+    # Check if values are within viable ranges
+    temp_in_range = p['temp_min'] <= temp <= p['temp_max']
+    rain_in_range = p['rain_min'] <= rainfall <= p['rain_max']
+    
+    # Calculate scores with penalty for being outside range
+    if temp_in_range:
+        temp_score = 100 * np.exp(-((temp - p['temp_optimal'])**2) / 50)
+    else:
+        distance_to_range = min(abs(temp - p['temp_min']), abs(temp - p['temp_max']))
+        temp_score = max(0, 100 - distance_to_range * 10)
+    
+    if rain_in_range:
+        rain_score = 100 * np.exp(-((rainfall - p['rain_optimal'])**2) / 180000)
+    else:
+        distance_to_range = min(abs(rainfall - p['rain_min']), abs(rainfall - p['rain_max']))
+        rain_score = max(0, 100 - distance_to_range * 0.05)
+    
     hum_score = 100 * np.exp(-((humidity - p['hum_optimal'])**2) / 200)
     
     if DEBUG:
         print(f"   [DEBUG] Scores - temp: {temp_score:.1f}, rain: {rain_score:.1f}, hum: {hum_score:.1f}")
+        print(f"   [DEBUG] In range - temp: {temp_in_range}, rain: {rain_in_range}")
     
     return (temp_score * 0.4) + (rain_score * 0.35) + (hum_score * 0.25)
 
@@ -161,7 +178,15 @@ def calc_soil_compat(crop: str, municipality: str) -> float:
     p = CROP_PARAMS[crop]
     
     ph_score = 100 * np.exp(-((soil['ph'] - p['ph_optimal'])**2) / 0.18)
-    npk_score = (soil['fertility'] / 5) * 100
+    
+    # For coconut, NPK scores are more important (coconut needs high K)
+    if crop == 'coconut':
+        npk_score = (soil['fertility'] / 5) * 100
+        # Bonus for good potassium (K score)
+        k_bonus = min(20, soil.get('k', 2) * 5)
+        npk_score = min(100, npk_score + k_bonus)
+    else:
+        npk_score = (soil['fertility'] / 5) * 100
     
     if DEBUG:
         print(f"   [DEBUG] Soil - ph: {soil['ph']}, fertility: {soil['fertility']}")
@@ -186,7 +211,11 @@ def get_soil_preparation(crop: str, municipality: str) -> List[str]:
     if crop == 'rice':
         soil_prep.append("Level the field for uniform water distribution")
         soil_prep.append("Construct small dikes (20-30 cm high) around field borders")
-    else:
+    elif crop == 'coconut':
+        soil_prep.append("Dig holes 60x60x60 cm at recommended spacing (8-9m between trees)")
+        soil_prep.append("Backfill holes with topsoil mixed with compost and 500g complete fertilizer per hole")
+        soil_prep.append("Ensure proper drainage - coconut doesn't tolerate waterlogging")
+    else:  # corn
         soil_prep.append("Create furrows 75 cm apart for proper drainage")
     
     return soil_prep
@@ -195,11 +224,21 @@ def get_soil_preparation(crop: str, municipality: str) -> List[str]:
 def get_harvest_advice(crop: str, predicted_yield_kg: float) -> List[str]:
     """Get harvest recommendations"""
     days = CROP_PARAMS[crop]['days']
-    harvest_advice = [
-        f"Harvest at {days} days after planting when grains are mature",
-        f"Expected yield: {int(predicted_yield_kg):,} kg/ha",
-        "Dry immediately to 14% moisture to prevent mold"
-    ]
+    
+    if crop == 'coconut':
+        harvest_advice = [
+            f"First harvest typically begins 4-5 years after planting",
+            f"Expected yield: {int(predicted_yield_kg):,} nuts/ha/year",
+            "Harvest nuts every 45-60 days when nuts are mature",
+            "Use climbing equipment or extendable pole harvesters for safety"
+        ]
+    else:
+        harvest_advice = [
+            f"Harvest at {days} days after planting when grains are mature",
+            f"Expected yield: {int(predicted_yield_kg):,} kg/ha",
+            "Dry immediately to 14% moisture to prevent mold"
+        ]
+    
     return harvest_advice
 
 
@@ -222,7 +261,8 @@ def get_typhoon_advice(municipality: str) -> Dict:
             advice = [
                 "⚠️ ACTIVE TYPHOON SEASON - HIGH RISK",
                 "Harvest mature crops immediately before typhoon",
-                "Clear drainage canals, secure equipment"
+                "Clear drainage canals, secure equipment",
+                "For coconut: Check tree health, remove weak fronds"
             ]
         elif risk_level == 'Moderate':
             advice = [
@@ -288,9 +328,23 @@ def get_planting_advice(crop: str, municipality: str, climate_data: Dict) -> Dic
     p = CROP_PARAMS[crop]
     
     temp_optimal = abs(temp - p['temp_optimal']) <= 3
-    rain_optimal = 500 <= rainfall <= 2000
+    rain_optimal = p['rain_min'] <= rainfall <= p['rain_max']
     
-    if temp_optimal and rain_optimal:
+    # For coconut, check if temperature is appropriate
+    if crop == 'coconut':
+        if temp < 20:
+            temp_optimal = False
+            message = f"❌ Temperature too low for coconut cultivation (needs >20°C)"
+        elif temp > 38:
+            temp_optimal = False
+            message = f"❌ Temperature too high for coconut cultivation (needs <38°C)"
+        elif temp_optimal and rain_optimal:
+            message = f"✅ Current weather conditions are IDEAL for {crop} cultivation"
+        elif temp_optimal or rain_optimal:
+            message = f"⚠️ Current conditions are ACCEPTABLE but not optimal for {crop}"
+        else:
+            message = f"❌ Current conditions are NOT IDEAL for {crop} cultivation"
+    elif temp_optimal and rain_optimal:
         status = "Excellent"
         message = f"✅ Current weather conditions are IDEAL for {crop} cultivation"
     elif temp_optimal or rain_optimal:
@@ -301,7 +355,7 @@ def get_planting_advice(crop: str, municipality: str, climate_data: Dict) -> Dic
         message = f"❌ Current conditions are NOT IDEAL for {crop} cultivation"
     
     return {
-        'status': status,
+        'status': 'Excellent' if (temp_optimal and rain_optimal) else ('Moderate' if (temp_optimal or rain_optimal) else 'Poor'),
         'message': message,
         'temperature': round(temp, 1),
         'rainfall': round(rainfall, 0),
@@ -317,6 +371,11 @@ def calculate_fallback_yield(crop: str, temperature: float, rainfall: float, soi
     
     # Temperature factor (Gaussian, optimal at temp_optimal)
     temp_factor = np.exp(-((temperature - p['temp_optimal'])**2) / 50)
+    
+    # For coconut, penalty is higher outside viable range
+    if crop == 'coconut':
+        if temperature < p['temp_min'] or temperature > p['temp_max']:
+            temp_factor *= 0.5
     temp_factor = max(0.3, min(1.0, temp_factor))
     
     # Rainfall factor (sigmoid-like, optimal at rain_optimal)
@@ -324,6 +383,11 @@ def calculate_fallback_yield(crop: str, temperature: float, rainfall: float, soi
         rain_factor = 1.0
     else:
         rain_factor = 0.5 + (rainfall / p['rain_optimal']) * 0.5
+    
+    # For coconut, steep penalty below minimum rainfall
+    if crop == 'coconut' and rainfall < p['rain_min']:
+        rain_factor *= 0.6
+    
     rain_factor = max(0.3, min(1.0, rain_factor))
     
     # Soil fertility factor
@@ -332,7 +396,7 @@ def calculate_fallback_yield(crop: str, temperature: float, rainfall: float, soi
     
     if DEBUG:
         print(f"   [DEBUG] Fallback factors - temp: {temp_factor:.2f}, rain: {rain_factor:.2f}, soil: {soil_factor:.2f}")
-        print(f"   [DEBUG] Base yield: {base_yield} kg/ha")
+        print(f"   [DEBUG] Base yield: {base_yield} {'kg/ha' if crop != 'coconut' else 'nuts/ha'}")
     
     predicted_yield = base_yield * temp_factor * rain_factor * soil_factor
     
@@ -356,7 +420,8 @@ def home():
             '/municipalities': 'GET - List supported municipalities',
             '/crop_params': 'GET - Crop parameters'
         },
-        'version': '2.0.0'
+        'supported_crops': ['rice', 'corn', 'coconut'],
+        'version': '3.0.0'
     })
 
 
@@ -374,8 +439,9 @@ def predict_full():
         crop = data.get('crop', '').lower()
         municipality = data.get('municipality', '')
         
-        if crop not in ['rice', 'corn']:
-            return jsonify({'error': 'Crop must be "rice" or "corn"'}), 400
+        # Updated to include coconut
+        if crop not in ['rice', 'corn', 'coconut']:
+            return jsonify({'error': 'Crop must be "rice", "corn", or "coconut"'}), 400
         
         if not municipality or municipality not in SOIL_DB:
             return jsonify({'error': f'Invalid municipality. Must be one of: {list(SOIL_DB.keys())}'}), 400
@@ -473,7 +539,11 @@ def predict_full():
         # ============================================
         print(f"\n📤 Calling Yield API...")
         
-        if raw_sequence and len(raw_sequence) > 0:
+        # For coconut, the yield API might not be ready yet
+        # Check if we should use fallback based on crop
+        use_yield_api = crop in ['rice', 'corn']  # Add 'coconut' when yield API supports it
+        
+        if use_yield_api and raw_sequence and len(raw_sequence) > 0:
             # Use the full sequence data
             yield_payload = {
                 'raw_sequence': raw_sequence,
@@ -495,8 +565,11 @@ def predict_full():
             )
             
             if status_code == 200 and yield_response_json:
-                predicted_yield_kg = yield_response_json.get('yield', REGIONAL_AVG[crop]) * 1000
-                print(f"✅ Yield API returned: {predicted_yield_kg:.0f} kg/ha ({predicted_yield_kg/1000:.1f} tons/ha)")
+                if crop == 'coconut':
+                    predicted_yield_kg = yield_response_json.get('yield', REGIONAL_AVG[crop])  # Already in nuts/ha
+                else:
+                    predicted_yield_kg = yield_response_json.get('yield', REGIONAL_AVG[crop]) * 1000
+                print(f"✅ Yield API returned: {predicted_yield_kg:.0f} {'nuts/ha' if crop == 'coconut' else 'kg/ha'}")
                 if DEBUG:
                     print(f"   [DEBUG] Full yield response: {yield_response_json}")
             else:
@@ -505,14 +578,17 @@ def predict_full():
                     crop, weather_data['avg_temperature'], 
                     weather_data['total_rainfall'], soil_fertility
                 )
-                print(f"   Using fallback: {predicted_yield_kg:.0f} kg/ha")
+                print(f"   Using fallback: {predicted_yield_kg:.0f} {'nuts/ha' if crop == 'coconut' else 'kg/ha'}")
         else:
-            print(f"   No raw_sequence provided, using fallback calculation")
+            if crop not in ['rice', 'corn']:
+                print(f"   Yield API not yet available for {crop}, using fallback calculation")
+            else:
+                print(f"   No raw_sequence provided, using fallback calculation")
             predicted_yield_kg = calculate_fallback_yield(
                 crop, weather_data['avg_temperature'], 
                 weather_data['total_rainfall'], soil_fertility
             )
-            print(f"   Fallback yield: {predicted_yield_kg:.0f} kg/ha")
+            print(f"   Fallback yield: {predicted_yield_kg:.0f} {'nuts/ha' if crop == 'coconut' else 'kg/ha'}")
         
         # ============================================
         # APPLY RULE-BASED FILTERS
@@ -559,8 +635,8 @@ def predict_full():
                 'suitability': suitability_result.get('suitability'),
                 'suitability_confidence': suitability_result.get('confidence'),
                 'suitability_probabilities': suitability_result.get('probabilities'),
-                'predicted_yield_kg': round(predicted_yield_kg, 0),
-                'predicted_yield_tons': round(predicted_yield_kg / 1000, 2)
+                'predicted_yield': round(predicted_yield_kg, 0),
+                'predicted_yield_unit': 'nuts/ha' if crop == 'coconut' else 'kg/ha'
             },
             'calculated_scores': {
                 'climate_match_score': round(climate_match, 1),
@@ -611,6 +687,7 @@ def health():
         'suitability_api': SUITABILITY_API_URL,
         'yield_api': YIELD_API_URL,
         'debug_mode': DEBUG,
+        'supported_crops': ['rice', 'corn', 'coconut'],
         'timestamp': datetime.now().isoformat()
     })
 
@@ -641,32 +718,34 @@ def debug_test():
     
     # Test Suitability API
     print("\n🔍 Testing Suitability API...")
-    try:
-        test_payload = {
-            'crop': 'rice',
-            'ndvi': 0.7,
-            'evi': 0.5,
-            'temperature': 27,
-            'rainfall': 1500,
-            'soil_fertility': 3,
-            'n_score': 3,
-            'p_score': 3,
-            'k_score': 3,
-            'humidity': 75
-        }
-        start = time.time()
-        response = requests.post(SUITABILITY_API_URL, json=test_payload, timeout=10)
-        results['suitability_api'] = {
-            'status': response.status_code,
-            'response_time_ms': round((time.time() - start) * 1000, 2),
-            'working': response.status_code == 200
-        }
-        if response.status_code == 200:
-            results['suitability_api']['data'] = response.json()
-    except Exception as e:
-        results['suitability_api'] = {'error': str(e), 'working': False}
+    test_crops = ['rice', 'corn', 'coconut']
+    for crop in test_crops:
+        try:
+            test_payload = {
+                'crop': crop,
+                'ndvi': 0.7,
+                'evi': 0.5,
+                'temperature': 27 if crop != 'coconut' else 30,
+                'rainfall': 1500 if crop != 'coconut' else 2000,
+                'soil_fertility': 3,
+                'n_score': 3,
+                'p_score': 3,
+                'k_score': 3,
+                'humidity': 75 if crop != 'coconut' else 80
+            }
+            start = time.time()
+            response = requests.post(SUITABILITY_API_URL, json=test_payload, timeout=10)
+            results[f'suitability_api_{crop}'] = {
+                'status': response.status_code,
+                'response_time_ms': round((time.time() - start) * 1000, 2),
+                'working': response.status_code == 200
+            }
+            if response.status_code == 200:
+                results[f'suitability_api_{crop}']['data'] = response.json()
+        except Exception as e:
+            results[f'suitability_api_{crop}'] = {'error': str(e), 'working': False}
     
-    # Test Yield API
+    # Test Yield API (only for rice/corn)
     print("🔍 Testing Yield API...")
     try:
         test_payload = {
@@ -701,6 +780,7 @@ if __name__ == '__main__':
     print(f"{'='*70}")
     print(f"Suitability API: {SUITABILITY_API_URL}")
     print(f"Yield API: {YIELD_API_URL}")
+    print(f"Supported crops: rice, corn, coconut")
     print(f"Starting on port {port}")
     print(f"{'='*70}\n")
     app.run(host='0.0.0.0', port=port)
