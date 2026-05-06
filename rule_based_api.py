@@ -563,6 +563,7 @@ def predict_full():
                 # Original rice/corn payload (unchanged)
                 yield_payload = {
                     'raw_sequence': raw_sequence,
+                    'crop': crop,
                     'crop_encoded': 1 if crop == 'rice' else 0,
                     'municipality': municipality,
                     'season': season,
