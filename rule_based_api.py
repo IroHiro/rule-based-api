@@ -593,7 +593,11 @@ def predict_full():
                     print(f"✅ Yield API returned: {predicted_yield_kg:.0f} nuts/ha")
                 else:
                     # Original rice/corn response (unchanged)
-                    predicted_yield_kg = yield_response_json.get('yield', REGIONAL_AVG[crop]) * 1000
+                    predicted_yield_kg = (
+                        yield_response_json.get('yield_kg') or           # Direct kg value
+                        yield_response_json.get('yield_tons', 0) * 1000 or  # Convert from tons
+                        REGIONAL_AVG[crop] * 1000                        # Fallback
+                    )
                     print(f"✅ Yield API returned: {predicted_yield_kg:.0f} kg/ha")
                 if DEBUG:
                     print(f"   [DEBUG] Full yield response: {yield_response_json}")
