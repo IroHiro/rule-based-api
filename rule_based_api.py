@@ -46,7 +46,7 @@ CLIMATE_DB = {
     'Polangui': {'temp': 27.4, 'rainfall': 1980, 'humidity': 81, 'ndvi': 0.71, 'evi': 0.49}
 }
 
-# Regional averages (kg/ha for rice/corn, nuts/ha for coconut)
+# Regional averages (kg/ha)
 REGIONAL_AVG = {'rice': 4500, 'corn': 3800, 'coconut': 12000}
 
 # Risk levels
@@ -345,10 +345,13 @@ def get_planting_advice(crop: str, municipality: str, climate_data: Dict) -> Dic
         else:
             message = f"❌ Current conditions are NOT IDEAL for {crop} cultivation"
     elif temp_optimal and rain_optimal:
+        status = "Excellent"
         message = f"✅ Current weather conditions are IDEAL for {crop} cultivation"
     elif temp_optimal or rain_optimal:
+        status = "Moderate"
         message = f"⚠️ Current conditions are ACCEPTABLE but not optimal for {crop}"
     else:
+        status = "Poor"
         message = f"❌ Current conditions are NOT IDEAL for {crop} cultivation"
     
     return {
@@ -485,7 +488,7 @@ def predict_full():
         duration_hrs = data.get('duration_hrs', 0)
         risk_score = data.get('risk_score', 1)
         
-        # Get previous_yield for coconut (optional)
+        # NEW: Get previous_yield for coconut (optional)
         previous_yield = data.get('previous_yield', 0)
         
         print(f"\n📊 INPUT VALUES SUMMARY:")
@@ -498,7 +501,8 @@ def predict_full():
         print(f"   📅 raw_sequence provided: {raw_sequence is not None}")
         if raw_sequence:
             print(f"      Weeks in sequence: {len(raw_sequence)}")
-        if crop == 'coconut':
+        # NEW: Print previous yield for coconut
+        if crop == 'coconut' and previous_yield > 0:
             print(f"   🥥 Previous yield: {previous_yield:,.0f} nuts")
         
         # ============================================
@@ -537,28 +541,28 @@ def predict_full():
             }
         
         # ============================================
-        # CALL YIELD API WITH RETRY - NOW SUPPORTS COCONUT
+        # CALL YIELD API WITH RETRY
         # ============================================
         print(f"\n📤 Calling Yield API...")
         
-        # NOW INCLUDE COCONUT - use yield API for all crops
-        use_yield_api = crop in ['rice', 'corn', 'coconut']  # FIXED: Added coconut
+        # CHANGED: Now include coconut - use yield API for all crops
+        use_yield_api = crop in ['rice', 'corn', 'coconut']  # ← ADDED 'coconut'
         
         if use_yield_api and raw_sequence and len(raw_sequence) > 0:
-            # Build payload based on crop type
+            # CHANGED: Build payload based on crop type
             if crop == 'coconut':
+                # NEW: Coconut payload
                 yield_payload = {
                     'raw_sequence': raw_sequence,
-                    'crop': 'coconut',  # Pass crop name
+                    'crop': 'coconut',
                     'municipality': municipality,
-                    'previous_yield': previous_yield  # Optional lag feature
+                    'previous_yield': previous_yield
                 }
                 print(f"   Using coconut payload with {len(raw_sequence)} weeks")
             else:
-                # Rice/Corn payload
+                # Original rice/corn payload (unchanged)
                 yield_payload = {
                     'raw_sequence': raw_sequence,
-                    'crop': crop,  # ADDED: Pass crop name
                     'crop_encoded': 1 if crop == 'rice' else 0,
                     'municipality': municipality,
                     'season': season,
@@ -571,9 +575,7 @@ def predict_full():
             
             if DEBUG:
                 print(f"   [DEBUG] Yield payload keys: {list(yield_payload.keys())}")
-                if crop == 'coconut':
-                    print(f"   [DEBUG] Previous yield: {previous_yield}")
-                else:
+                if crop != 'coconut':
                     print(f"   [DEBUG] Season: {season}, risk_score: {risk_score}")
             
             yield_response_json, status_code = call_api_with_retry(
@@ -581,14 +583,15 @@ def predict_full():
             )
             
             if status_code == 200 and yield_response_json:
+                # CHANGED: Handle coconut response differently
                 if crop == 'coconut':
-                    # Handle coconut response - get nuts directly
+                    # NEW: Get nuts from coconut response
                     predicted_yield_kg = yield_response_json.get('predicted_yield_nuts', REGIONAL_AVG[crop])
                     if predicted_yield_kg == 0 and 'predicted_yield_millions' in yield_response_json:
                         predicted_yield_kg = yield_response_json['predicted_yield_millions'] * 1000000
                     print(f"✅ Yield API returned: {predicted_yield_kg:.0f} nuts/ha")
                 else:
-                    # Rice/Corn response - get tons and convert to kg
+                    # Original rice/corn response (unchanged)
                     predicted_yield_kg = yield_response_json.get('yield', REGIONAL_AVG[crop]) * 1000
                     print(f"✅ Yield API returned: {predicted_yield_kg:.0f} kg/ha")
                 if DEBUG:
@@ -601,7 +604,10 @@ def predict_full():
                 )
                 print(f"   Using fallback: {predicted_yield_kg:.0f} {'nuts/ha' if crop == 'coconut' else 'kg/ha'}")
         else:
-            print(f"   No raw_sequence provided, using fallback calculation")
+            if crop not in ['rice', 'corn']:
+                print(f"   Yield API not yet available for {crop}, using fallback calculation")
+            else:
+                print(f"   No raw_sequence provided, using fallback calculation")
             predicted_yield_kg = calculate_fallback_yield(
                 crop, weather_data['avg_temperature'], 
                 weather_data['total_rainfall'], soil_fertility
@@ -763,14 +769,13 @@ def debug_test():
         except Exception as e:
             results[f'suitability_api_{crop}'] = {'error': str(e), 'working': False}
     
-    # Test Yield API for all crops
+    # Test Yield API (updated to include coconut test)
     print("🔍 Testing Yield API...")
     
     # Test rice/corn
     try:
         test_payload = {
             'raw_sequence': [[0.7, 0.5, 30, 25, 27, 50, 80, 200, 10, 2024, 15, 2]],
-            'crop': 'rice',
             'crop_encoded': 1,
             'municipality': 'Ligao',
             'season': 2,
@@ -781,17 +786,17 @@ def debug_test():
         }
         start = time.time()
         response = requests.post(YIELD_API_URL, json=test_payload, timeout=10)
-        results['yield_api_rice'] = {
+        results['yield_api_rice_corn'] = {
             'status': response.status_code,
             'response_time_ms': round((time.time() - start) * 1000, 2),
             'working': response.status_code == 200
         }
         if response.status_code == 200:
-            results['yield_api_rice']['data'] = response.json()
+            results['yield_api_rice_corn']['data'] = response.json()
     except Exception as e:
-        results['yield_api_rice'] = {'error': str(e), 'working': False}
+        results['yield_api_rice_corn'] = {'error': str(e), 'working': False}
     
-    # Test coconut
+    # NEW: Test coconut
     try:
         test_payload_coconut = {
             'raw_sequence': [[0.7, 0.5, 30, 25, 27, 50, 80, 200, 10, 2024, 15, 2]],
