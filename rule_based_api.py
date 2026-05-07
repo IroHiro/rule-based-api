@@ -47,7 +47,7 @@ CLIMATE_DB = {
 }
 
 # Regional averages (kg/ha)
-REGIONAL_AVG = {'rice': 4500, 'corn': 3800, 'coconut': 12000}
+REGIONAL_AVG = {'rice': 4600, 'corn': 4500, 'coconut': 21364402}
 
 # Risk levels
 RISK_LEVELS = {
